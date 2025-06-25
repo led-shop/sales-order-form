@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sales Order - Kenari Mas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>body { font-family: 'Arial', sans-serif; }</style>
+</head>
+<body class="bg-gray-100">
+  <div class="max-w-4xl mx-auto p-6 bg-white mt-10 rounded-xl shadow-md">
+    <h1 class="text-2xl font-bold mb-6">Formulir Sales Order - Kenari Mas</h1>
+
+    <form id="orderForm">
+      <div class="grid grid-cols-2 gap-4">
+        <div><label>Nama Sales</label><input id="sales-name" required class="form-input w-full"></div>
+        <div><label>No. HP Sales</label><input id="sales-phone" required class="form-input w-full"></div>
+        <div><label>Tanggal Order</label><input id="order-date" readonly class="form-input w-full"></div>
+        <div><label>No. Sales Order</label><input id="so-number" readonly class="form-input w-full"></div>
+        <div><label>Termin (NET)</label><input id="net-terms" class="form-input w-full"></div>
+      </div>
+
+      <hr class="my-6">
+
+      <div class="grid grid-cols-2 gap-4">
+        <div><label>Nama Pelanggan</label><input id="customer-name" class="form-input w-full"></div>
+        <div><label>No. HP Pelanggan</label><input id="customer-phone" class="form-input w-full"></div>
+        <div class="col-span-2"><label>Alamat Penagihan</label><textarea id="billing-address" class="form-input w-full"></textarea></div>
+        <div class="col-span-2"><label>Alamat Pengiriman</label><textarea id="shipping-address" class="form-input w-full"></textarea></div>
+      </div>
+
+      <hr class="my-6">
+
+      <h2 class="font-semibold mb-2">Detail Produk</h2>
+      <table class="w-full text-sm border mb-4">
+        <thead><tr class="bg-gray-100"><th>Produk</th><th>Jumlah Produk (pcs)</th><th>Harga Satuan (Rp)</th><th>Harga Jumlah (Rp)</th></tr></thead>
+        <tbody id="product-table"></tbody>
+      </table>
+
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <div><label>Subtotal</label><input id="subtotal" readonly class="form-input w-full text-right"></div>
+        <div><label>Ongkir</label><input id="ongkir" type="number" value="0" class="form-input w-full text-right"></div>
+        <div><label>Biaya lainnya</label><input id="biaya-lain" type="number" value="0" class="form-input w-full text-right"></div>
+        <div><label>Diskon</label><input id="diskon" type="number" value="0" class="form-input w-full text-right"></div>
+        <div><label>Pajak (11%)</label><input id="pajak" readonly class="form-input w-full text-right"></div>
+        <div><label>Grand Total</label><input id="grand-total" readonly class="form-input w-full text-right font-bold"></div>
+      </div>
+
+      <button type="button" onclick="sendWhatsAppSummary()" class="bg-green-600 hover:bg-green-700 text-white w-full py-2 rounded mb-2">Buat Ringkasan Order</button>
+      <button type="button" onclick="exportToPDF()" class="bg-blue-600 hover:bg-blue-700 text-white w-full py-2 rounded">Simpan sebagai PDF</button>
+<button type="button" onclick="postToGoogleSheet()" class="bg-yellow-500 hover:bg-yellow-600 text-white w-full py-2 rounded mt-2">
+  Kirim ke Google Sheets
+</button>
+
+    </form>
+  </div>
+
+<script>
+const productList = [
+  "LN | 30W | PUTIH","CF2040 | 50W | PUTIH","LY-A | 50W | PUTIH","T12 | 100W | PUTIH",
+  "TR248-B | 100W | PUTIH","SG-R5 (BODY PUTIH) | 100W | PUTIH","SG-R5 (BODY HITAM) | 100W | PUTIH",
+  "DB-820 | 80W | PUTIH","SG-2 | 10W | PUTIH","SG-9 | 10W | PUTIH","HSG-1 | 10W | PUTIH",
+  "HSG-2 | 10W | PUTIH","DM-125 | 7W | PUTIH","DM-170 | 10W | PUTIH","BW-A1 | 100W | PUTIH",
+  "BW-A2 | 200W | PUTIH","NJ-618 | 15W | WARM WHITE","NJ-618 | 15W | RGB","NJ-XH | 180W | PUTIH",
+  "NJ-BC | 600W | PUTIH","NJ-BC | 800W | PUTIH","NJ-BC | 1000W | PUTIH","NJ-BC | 1200W | PUTIH",
+  "NJ-BM | 800W | PUTIH","NJ-BM | 1000W | PUTIH","NJ-YS2 | 100W | PUTIH","NJ-YS2 | 200W | PUTIH",
+  "NJ-YS2 | 300W | PUTIH"
+];
+
+function formatRupiah(val) {
+  return new Intl.NumberFormat('id-ID').format(val);
+}
+
+function setupListeners() {
+  document.querySelectorAll('.qty, .unit-price').forEach(input => input.addEventListener('input', calculateTotal));
+  ['ongkir', 'biaya-lain', 'diskon'].forEach(id => document.getElementById(id).addEventListener('input', calculateTotal));
+  document.querySelectorAll('#orderForm input, #orderForm textarea').forEach(input => input.addEventListener('input', () => calculateTotal()));
+}
+
+window.onload = function () {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth()+1).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const today = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('order-date').value = today;
+
+  const stored = localStorage.getItem('soCounter') || `${dd}${mm}${yyyy}-000`;
+  const [datePart, lastNum] = stored.split('-');
+  const newNum = String(parseInt(lastNum) + 1).padStart(3, '0');
+  const newSO = `${dd}/${mm}/${yyyy}-${newNum}`;
+  document.getElementById('so-number').value = newSO;
+  localStorage.setItem('soCounter', `${dd}${mm}${yyyy}-${newNum}`);
+
+  const tbody = document.getElementById('product-table');
+  for (let i = 0; i < 10; i++) {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><select class="form-input w-full product">${productList.map(p => `<option>${p}</option>`).join('')}</select></td>
+      <td><input type="number" value="0" class="form-input w-full qty"></td>
+      <td><input type="number" value="0" class="form-input w-full unit-price"></td>
+      <td><input type="text" class="form-input w-full total" readonly></td>`;
+    tbody.appendChild(row);
+  }
+
+  setupListeners();
+  calculateTotal();
+};
+
+function calculateTotal() {
+  let subtotal = 0;
+  document.querySelectorAll('#product-table tr').forEach(row => {
+    const qty = parseInt(row.querySelector('.qty').value) || 0;
+    const price = parseInt(row.querySelector('.unit-price').value) || 0;
+    const total = qty * price;
+    row.querySelector('.total').value = formatRupiah(total);
+    subtotal += total;
+  });
+  document.getElementById('subtotal').value = formatRupiah(subtotal);
+  const ongkir = parseInt(document.getElementById('ongkir').value) || 0;
+  const biaya = parseInt(document.getElementById('biaya-lain').value) || 0;
+  const diskon = parseInt(document.getElementById('diskon').value) || 0;
+  const pajak = Math.round((subtotal + ongkir + biaya - diskon) * 0.11);
+  const grand = subtotal + ongkir + biaya - diskon + pajak;
+  document.getElementById('pajak').value = formatRupiah(pajak);
+  document.getElementById('grand-total').value = formatRupiah(grand);
+}
+
+function sendWhatsAppSummary() {
+  calculateTotal();
+  let msg = `*SALES ORDER KENARI MAS*\n\n`;
+  msg += `Tanggal: ${document.getElementById('order-date').value}\nSO: ${document.getElementById('so-number').value}\nSales: ${document.getElementById('sales-name').value} (${document.getElementById('sales-phone').value})\nTermin: ${document.getElementById('net-terms').value}\n\n`;
+  msg += `Pelanggan: ${document.getElementById('customer-name').value}\nHP: ${document.getElementById('customer-phone').value}\nTagih: ${document.getElementById('billing-address').value}\nKirim: ${document.getElementById('shipping-address').value}\n\n*Produk:*\n`;
+  document.querySelectorAll('#product-table tr').forEach((row, i) => {
+    const name = row.querySelector('.product').value;
+    const qty = row.querySelector('.qty').value;
+    const price = row.querySelector('.unit-price').value;
+    if (parseInt(qty) > 0) {
+      msg += `${i + 1}. ${name} - ${qty} pcs x Rp${formatRupiah(price)}\n`;
+    }
+  });
+  msg += `\nSubtotal: Rp${document.getElementById('subtotal').value}`;
+  msg += `\nOngkir: Rp${document.getElementById('ongkir').value}`;
+  msg += `\nBiaya lainnya: Rp${document.getElementById('biaya-lain').value}`;
+  msg += `\nDiskon: Rp${document.getElementById('diskon').value}`;
+  msg += `\nPajak: Rp${document.getElementById('pajak').value}`;
+  msg += `\nGrand Total: Rp${document.getElementById('grand-total').value}`;
+  window.open(`https://wa.me/62881082286858?text=${encodeURIComponent(msg)}`, '_blank');
+}
+
+function exportToPDF() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(12);
+  let y = 10;
+  doc.text('Ringkasan Sales Order - Kenari Mas', 10, y);
+  y += 10;
+  doc.text(`Tanggal: ${document.getElementById('order-date').value}`, 10, y += 6);
+  doc.text(`No. SO: ${document.getElementById('so-number').value}`, 10, y += 6);
+  doc.text(`Sales: ${document.getElementById('sales-name').value}`, 10, y += 6);
+  doc.text(`No. HP: ${document.getElementById('sales-phone').value}`, 10, y += 6);
+  doc.text(`Termin: ${document.getElementById('net-terms').value}`, 10, y += 6);
+  y += 4;
+  doc.text(`Pelanggan: ${document.getElementById('customer-name').value}`, 10, y += 6);
+  doc.text(`No. HP: ${document.getElementById('customer-phone').value}`, 10, y += 6);
+  doc.text(`Tagih: ${document.getElementById('billing-address').value}`, 10, y += 6);
+  doc.text(`Kirim: ${document.getElementById('shipping-address').value}`, 10, y += 6);
+  y += 4;
+  document.querySelectorAll('#product-table tr').forEach((row, i) => {
+    const name = row.querySelector('.product').value;
+    const qty = row.querySelector('.qty').value;
+    const price = row.querySelector('.unit-price').value;
+    if (parseInt(qty) > 0) {
+      doc.text(`${i + 1}. ${name} - ${qty} pcs x Rp${price}`, 10, y += 6);
+    }
+  });
+  y += 6;
+  doc.text(`Subtotal: Rp${document.getElementById('subtotal').value}`, 10, y += 6);
+  doc.text(`Ongkir: Rp${document.getElementById('ongkir').value}`, 10, y += 6);
+  doc.text(`Biaya Lainnya: Rp${document.getElementById('biaya-lain').value}`, 10, y += 6);
+  doc.text(`Diskon: Rp${document.getElementById('diskon').value}`, 10, y += 6);
+  doc.text(`Pajak: Rp${document.getElementById('pajak').value}`, 10, y += 6);
+  doc.text(`Grand Total: Rp${document.getElementById('grand-total').value}`, 10, y += 6);
+  doc.save('SalesOrder_KenariMas.pdf');
+}
+</script>
+<script>
+function postToGoogleSheet() {
+  const products = [];
+  document.querySelectorAll('#product-table tr').forEach(row => {
+    const name = row.querySelector('.product').value;
+    const qty = row.querySelector('.qty').value;
+    const unit = row.querySelector('.unit-price').value;
+    const total = qty * unit;
+    if (parseInt(qty) > 0) {
+      products.push({ name, qty, unit, total });
+    }
+  });
+
+  const payload = {
+    orderDate: document.getElementById('order-date').value,
+    soNumber: document.getElementById('so-number').value,
+    salesName: document.getElementById('sales-name').value,
+    salesPhone: document.getElementById('sales-phone').value,
+    termin: document.getElementById('net-terms').value,
+    customerName: document.getElementById('customer-name').value,
+    customerPhone: document.getElementById('customer-phone').value,
+    billingAddress: document.getElementById('billing-address').value,
+    shippingAddress: document.getElementById('shipping-address').value,
+    subtotal: document.getElementById('subtotal').value.replace(/[^\\d]/g, ''),
+    ongkir: document.getElementById('ongkir').value,
+    biayaLain: document.getElementById('biaya-lain').value,
+    diskon: document.getElementById('diskon').value,
+    pajak: document.getElementById('pajak').value.replace(/[^\\d]/g, ''),
+    grandTotal: document.getElementById('grand-total').value.replace(/[^\\d]/g, ''),
+    products
+  };
+
+  fetch('https://script.google.com/macros/s/AKfycbwzgaF2kcMjSa7eovh5XnT6tuUOzt7_mL-qTNQTSdG0Pppok_sH_hOuOvXSdqOw_Jml/exec', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' },
+    mode: 'no-cors'
+  })
+  .then(() => alert('✅ Data berhasil dikirim ke Google Sheets!')) 
+  .catch(err => alert('❌ Gagal mengirim data ke Google Sheets!'));
+}
+</script>
+</body>
+</html>
